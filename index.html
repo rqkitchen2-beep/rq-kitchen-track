@@ -41,6 +41,17 @@ h1{font-size:27px;margin:12px 0 2px}
 .pickup small{display:block;color:var(--muted)}
 .pickup strong{font-size:56px;direction:ltr;display:block;line-height:1.15;color:var(--orange)}
 body.alarm{animation:flash 1s steps(1) infinite}
+body.alarm .pickup{background:#fff;border-color:#fff}
+body.alarm .pickup strong{color:#1A1A1A}
+body.alarm .pickup small,body.alarm .sub,body.alarm .steplbl{color:#1A1A1A}
+body.alarm h1{color:#1A1A1A}
+body.alarm .logo b{color:#fff}
+.gate{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;padding:20px 16px calc(24px + env(safe-area-inset-bottom,0px))}
+.gate .sheet{background:var(--paper);border-radius:24px;padding:24px 20px;max-width:440px;width:100%;text-align:center}
+.gate h2{margin:0 0 6px;font-size:22px}
+.gate p{margin:0;color:var(--muted);font-size:15px}
+.gate .btn{font-size:19px;padding:16px}
+.diag{font-size:12px;color:var(--muted);margin-top:8px;direction:ltr}
 @keyframes flash{0%{background:var(--orange)}50%{background:var(--bg)}}
 body.alarm h1,body.alarm .pickup strong{animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{50%{transform:scale(1.08)}}
@@ -69,21 +80,45 @@ const pushable="serviceWorker" in navigator&&"PushManager" in window&&"Notificat
 function toast(t){const el=$("#toast");el.textContent=t;el.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove("show"),3200)}
 async function call(a,extra={}){const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({a,id,...extra})});const j=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(j.error||"error"),{code:j.error});return j}
 
-// ---- sound: unlocked on the customer's first tap ----
-function unlockAudio(){try{audio=audio||new (window.AudioContext||window.webkitAudioContext)();audio.resume();}catch(e){}}
+// ---- sound: an <audio> element (plays even with the silent switch on iPhone) + WebAudio backup.
+// Browsers only allow sound after the customer taps the page once, so the gate below asks for that tap.
+let audioEl=null, unlocked=false, gateDone=false;
+function makeChimeWav(){
+  const sr=22050, dur=1.8, n=Math.floor(sr*dur), buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
+  const w=(o,str)=>{for(let i=0;i<str.length;i++)v.setUint8(o+i,str.charCodeAt(i))};
+  w(0,"RIFF");v.setUint32(4,36+n*2,true);w(8,"WAVE");w(12,"fmt ");v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,"data");v.setUint32(40,n*2,true);
+  const notes=[[880,0],[1175,.2],[1568,.4],[1175,.9],[1568,1.1]];
+  for(let i=0;i<n;i++){const t=i/sr;let x=0;
+    for(const [f,d] of notes){const tt=t-d;if(tt>=0&&tt<.6)x+=Math.sin(2*Math.PI*f*tt)*Math.exp(-tt*5)}
+    v.setInt16(44+i*2,Math.max(-1,Math.min(1,x*.8))*32767,true)}
+  return URL.createObjectURL(new Blob([buf],{type:"audio/wav"}));
+}
+function unlockAudio(){
+  try{ if(navigator.audioSession) navigator.audioSession.type="playback"; }catch(e){}
+  try{ audio=audio||new (window.AudioContext||window.webkitAudioContext)(); audio.resume(); }catch(e){}
+  try{
+    if(!audioEl){audioEl=new Audio(makeChimeWav());audioEl.loop=true;audioEl.preload="auto";audioEl.setAttribute("playsinline","")}
+    audioEl.muted=true; const p=audioEl.play(); if(p) p.then(()=>{audioEl.pause();audioEl.currentTime=0;audioEl.muted=false;unlocked=true}).catch(()=>{});
+  }catch(e){}
+}
 function chime(){ if(!audio) return; const t=audio.currentTime;
   [[880,0],[1175,.18],[1568,.36]].forEach(([f,d])=>{const o=audio.createOscillator(),g=audio.createGain();o.type="triangle";o.frequency.value=f;
     g.gain.setValueAtTime(0,t+d);g.gain.linearRampToValueAtTime(.6,t+d+.02);g.gain.exponentialRampToValueAtTime(.001,t+d+.5);o.connect(g).connect(audio.destination);o.start(t+d);o.stop(t+d+.55)});}
+let wake=null;
+async function keepAwake(){try{if("wakeLock" in navigator&&!wake&&!document.hidden){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>wake=null)}}catch(e){}}
 function startAlarm(){ if(alarmOn||alarmStopped) return; alarmOn=true; document.body.classList.add("alarm");
-  const tick=()=>{chime(); if(navigator.vibrate) navigator.vibrate([400,150,400]); document.title=document.title.startsWith("🔔")?"طلبك جاهز!":"🔔 طلبك جاهز!";};
+  let played=false; if(audioEl){audioEl.muted=false;audioEl.currentTime=0;const p=audioEl.play();if(p)p.then(()=>played=true).catch(()=>{})}
+  const tick=()=>{ if(!played) chime(); if(navigator.vibrate) navigator.vibrate([400,150,400]); document.title=document.title.startsWith("🔔")?"طلبك جاهز!":"🔔 طلبك جاهز!";};
   tick(); beepTimer=setInterval(tick,2200);}
-function stopAlarm(){alarmOn=false;alarmStopped=true;clearInterval(beepTimer);document.body.classList.remove("alarm");document.title="RQ Kitchen — طلبي";if(navigator.vibrate)navigator.vibrate(0)}
+function stopAlarm(){alarmOn=false;alarmStopped=true;clearInterval(beepTimer);if(audioEl)audioEl.pause();document.body.classList.remove("alarm");document.title="RQ Kitchen — طلبي";if(navigator.vibrate)navigator.vibrate(0)}
 
 // ---- push subscription ----
 function b64(s){s=s.replace(/-/g,"+").replace(/_/g,"/");const p="=".repeat((4-s.length%4)%4);const r=atob(s+p);return Uint8Array.from(r,c=>c.charCodeAt(0))}
+let pushErr="";
 async function enableAlerts(){
-  unlockAudio(); chime();
-  if(!pushable){render();return}
+  unlockAudio(); keepAwake();
+  if(!pushable||(isIOS&&!standalone)){render();return}
   try{
     const perm=await Notification.requestPermission();
     if(perm!=="granted"){toast("التنبيه مرفوض. فعّل الإشعارات لهذا الموقع من إعدادات المتصفح.");return}
@@ -93,7 +128,7 @@ async function enableAlerts(){
     if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(vapid)});
     await call("sub",{sub:sub.toJSON()});
     subscribed=true; toast("تم ✓ بيوصلك تنبيه حتى لو قفلت الصفحة"); render();
-  }catch(e){toast("ما قدرنا نفعّل التنبيه. خلّ الصفحة مفتوحة وبننبهك بالصوت.")}
+  }catch(e){pushErr=(e&&(e.name+": "+e.message))||String(e);toast("ما قدرنا نفعّل الإشعار. خلّ الصفحة مفتوحة وبننبهك بالصوت.");render()}
 }
 
 function burger(build){return `<div class="stage ${build?"building":""}"><div class="plate"></div><div class="layer bun-b"></div><div class="layer patty"></div><div class="layer cheese"></div><div class="layer lettuce"></div><div class="layer bun-t"></div></div>`}
@@ -102,9 +137,9 @@ function alertCard(){
   if(subscribed) return `<div class="alertcard ok"><p><b>التنبيه مفعّل 🔔</b><br>تقدر تقفل الصفحة أو تطلع، بيوصلك إشعار على جوالك أول ما يجهز طلبك.</p></div>`;
   if(isIOS&&!standalone) return `<div class="alertcard"><p><b>عشان يوصلك تنبيه على الآيفون حتى لو طلعت:</b></p>
     <ol class="ios-steps"><li>اضغط زر المشاركة <b>⬆︎</b> أسفل Safari</li><li>اختر «إضافة إلى الشاشة الرئيسية»</li><li>افتح «RQ طلبي» من الشاشة الرئيسية واضغط «فعّل التنبيه»</li></ol>
-    <button class="btn ghost" data-act="sound">أو خلّ الصفحة مفتوحة ونبهني بالصوت</button></div>`;
+    <p class="sub" style="margin-top:8px">أو خلّ هذه الصفحة مفتوحة: الشاشة ما بتنطفي وبننبهك بالصوت.</p></div>`;
   if(!pushable) return `<div class="alertcard"><p>متصفحك ما يدعم الإشعارات. خلّ الصفحة مفتوحة وبننبهك بصوت.</p><button class="btn ghost" data-act="sound">تشغيل تنبيه الصوت</button></div>`;
-  return `<div class="alertcard"><p><b>لا تفوّت طلبك</b><br>فعّل التنبيه ويوصلك إشعار بصوت حتى لو قفلت الجوال أو كنت بعيد.</p><button class="btn primary" data-act="enable">فعّل التنبيه 🔔</button></div>`;
+  return `<div class="alertcard"><p><b>لا تفوّت طلبك</b><br>فعّل التنبيه ويوصلك إشعار حتى لو قفلت الجوال أو كنت بعيد.</p><button class="btn primary" data-act="enable">فعّل التنبيه 🔔</button>${pushErr?`<div class="diag">${pushErr.replace(/</g,"")}</div>`:""}</div>`;
 }
 function render(){
   const app=$("#app");
@@ -134,7 +169,13 @@ document.addEventListener("click",async e=>{
     render();
   }catch(err){toast("صار خطأ في الاتصال، حاول مرة ثانية")}
 });
-document.addEventListener("pointerdown",unlockAudio,{once:true});
+function showGate(){
+  if(document.getElementById("gate")) return;
+  const g=document.createElement("div");g.className="gate";g.id="gate";
+  g.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="gt"><h2 id="gt">تابع طلبك</h2><p>اضغط هنا عشان نقدر ننبهك بالصوت أول ما يجهز طلبك.</p><button class="btn primary" id="gateBtn">تابع طلبي ونبّهني 🔔</button></div>`;
+  document.body.appendChild(g);
+  document.getElementById("gateBtn").onclick=()=>{gateDone=true;g.remove();enableAlerts()};
+}
 
 async function poll(){
   if(!id){$("#app").innerHTML=`<p class="sub empty">امسح رمز الطلب من الكاشير لمتابعة طلبك.</p>`;return}
@@ -143,6 +184,7 @@ async function poll(){
     if(order.status==="ready"&&lastStatus!=="ready") startAlarm();
     if(order.status!=="ready"&&alarmOn) stopAlarm();
     lastStatus=order.status; render();
+    if(order.status!=="picked"&&!gateDone) showGate(); else if(order.status==="picked"){const g=document.getElementById("gate");if(g)g.remove()}
   }catch(e){
     if(e.code==="not_found"||e.code==="bad_id"){try{localStorage.removeItem("rq_last")}catch(_){} $("#app").innerHTML=`<p class="sub empty">ما لقينا هذا الطلب. امسح الرمز من الكاشير مرة ثانية.</p>`;return}
   }
@@ -150,7 +192,7 @@ async function poll(){
 }
 if(pushable) navigator.serviceWorker.register("/sw.js").then(r=>r.pushManager.getSubscription()).then(s=>{if(s&&id)call("sub",{sub:s.toJSON()}).then(()=>{subscribed=true;render()}).catch(()=>{})}).catch(()=>{});
 if(pushable) navigator.serviceWorker.addEventListener("message",ev=>{if(ev.data==="refresh"){lastStatus=null;alarmStopped=false;}});
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&order)render()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){keepAwake();if(order)render()}});
 poll();
 </script>
 </body>
