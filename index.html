@@ -70,8 +70,11 @@ const API="https://dhqgorvtwgzekmmjztyr.supabase.co/functions/v1/track";
 const BR={"MBZ":"مدينة محمد بن زايد","Al Wathba":"الوثبة","Al Nahyan":"آل نهيان","Al Ain":"العين"};
 const MAPS={"MBZ":"RQ Kitchen Mohamed Bin Zayed City","Al Wathba":"RQ Kitchen ADNOC Al Wathba","Al Nahyan":"RQ Kitchen Al Nahyan Abu Dhabi","Al Ain":"RQ Kitchen Bin Ham Hall Al Ain"};
 const $=s=>document.querySelector(s);
+const SLUG={"mbz":"MBZ","wathba":"Al Wathba","nahyan":"Al Nahyan","alain":"Al Ain"};
+const joinBranch=SLUG[((location.pathname.match(/\/b\/([a-z]+)/i)||[])[1]||"").toLowerCase()]||null;
 let id=(location.pathname.match(/\/o\/([0-9a-f-]{36})/i)||[])[1]||new URLSearchParams(location.search).get("o");
-try{ if(id) localStorage.setItem("rq_last",id); else id=localStorage.getItem("rq_last"); }catch(e){}
+let prevId=null;
+try{ if(id) localStorage.setItem("rq_last",id); else if(joinBranch) prevId=localStorage.getItem("rq_last"); else id=localStorage.getItem("rq_last"); }catch(e){}
 let order=null, subscribed=false, alarmOn=false, alarmStopped=false, audio=null, beepTimer=null, lastStatus=null;
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
 const standalone=window.matchMedia("(display-mode: standalone)").matches||navigator.standalone===true;
@@ -169,6 +172,31 @@ document.addEventListener("click",async e=>{
     render();
   }catch(err){toast("صار خطأ في الاتصال، حاول مرة ثانية")}
 });
+function showJoin(){
+  $("#br").hidden=false;$("#br").textContent="فرع "+BR[joinBranch];
+  $("#app").innerHTML=`<h1 style="margin-top:30px">تابع طلبك</h1><p class="sub">اكتب رقم الطلب المكتوب على فاتورتك</p>
+    <input id="jn" inputmode="numeric" maxlength="6" placeholder="000" aria-label="رقم الطلب" style="margin-top:18px;font-size:44px;font-weight:700;text-align:center;letter-spacing:.1em;direction:ltr">
+    <button class="btn primary" id="jb" style="font-size:19px;padding:16px">تابع طلبي ونبّهني 🔔</button>
+    <p class="sub" style="margin-top:12px;font-size:14px">بننبهك بالصوت أول ما يجهز طلبك</p>
+    ${prevId?`<a class="btn ghost" href="/o/${prevId}">طلبي السابق</a>`:""}`;
+  const inp=$("#jn"); inp.addEventListener("input",()=>inp.value=inp.value.replace(/\D/g,""));
+  inp.addEventListener("keydown",e=>{if(e.key==="Enter")$("#jb").click()});
+  $("#jb").onclick=async()=>{
+    const num=inp.value.trim(); if(!num){toast("اكتب رقم الطلب");inp.focus();return}
+    unlockAudio(); keepAwake();
+    // ask for notification permission inside the tap (iOS requires it)
+    if(pushable&&!(isIOS&&!standalone)){try{Notification.requestPermission()}catch(e){}}
+    $("#jb").disabled=true;
+    try{
+      const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({a:"join",branch:joinBranch,num})});
+      const j=await r.json(); if(!r.ok||!j.order) throw 0;
+      id=j.order.id; try{localStorage.setItem("rq_last",id)}catch(e){}
+      history.replaceState(null,"","/o/"+id);
+      gateDone=true; poll(); enableAlerts();
+    }catch(e){$("#jb").disabled=false;toast("صار خطأ في الاتصال، حاول مرة ثانية")}
+  };
+  inp.focus();
+}
 function showGate(){
   if(document.getElementById("gate")) return;
   const g=document.createElement("div");g.className="gate";g.id="gate";
@@ -193,7 +221,7 @@ async function poll(){
 if(pushable) navigator.serviceWorker.register("/sw.js").then(r=>r.pushManager.getSubscription()).then(s=>{if(s&&id)call("sub",{sub:s.toJSON()}).then(()=>{subscribed=true;render()}).catch(()=>{})}).catch(()=>{});
 if(pushable) navigator.serviceWorker.addEventListener("message",ev=>{if(ev.data==="refresh"){lastStatus=null;alarmStopped=false;}});
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){keepAwake();if(order)render()}});
-poll();
+if(joinBranch&&!id) showJoin(); else poll();
 </script>
 </body>
 </html>
