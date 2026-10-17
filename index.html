@@ -36,6 +36,8 @@ h1{font-size:27px;margin:12px 0 2px}
 .alertcard{width:100%;border:2px solid var(--orange);border-radius:18px;padding:16px;margin-top:16px;text-align:right}
 .alertcard p{margin:0;font-size:15px}
 .alertcard.ok{border-color:var(--green)}
+.btn.wallet{background:#000;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600}
+.btn.wallet .apl{font-family:-apple-system,system-ui;font-size:20px;line-height:1}
 .ios-steps{margin:10px 0 0;padding-right:20px;font-size:15px}
 .pickup{border:3px dashed var(--orange);border-radius:20px;padding:8px 30px;margin:10px 0}
 .pickup small{display:block;color:var(--muted)}
@@ -136,7 +138,13 @@ async function enableAlerts(){
 
 function burger(build){return `<div class="stage ${build?"building":""}"><div class="plate"></div><div class="layer bun-b"></div><div class="layer patty"></div><div class="layer cheese"></div><div class="layer lettuce"></div><div class="layer bun-t"></div></div>`}
 function steps(i){return `<div class="steps">${[0,1,2].map(k=>`<i class="${k<=i?"done":""}"></i>`).join("")}</div><div class="steplbl"><span>استلمنا طلبك</span><span>نحضّره</span><span>جاهز</span></div>`}
+const WALLET_URL="https://dhqgorvtwgzekmmjztyr.supabase.co/functions/v1/wallet/pass/";
+let walletAdded=false;
 function alertCard(){
+  if(walletAdded) return `<div class="alertcard ok"><p><b>أُضيف طلبك إلى Apple Wallet ✓</b><br>تقدر تقفل الصفحة أو تطلع، بيوصلك إشعار على شاشة القفل أول ما يجهز طلبك.</p></div>`;
+  if(isIOS&&!subscribed) return `<div class="alertcard"><p><b>لا تفوّت طلبك</b><br>أضف طلبك إلى Apple Wallet ويوصلك إشعار على شاشة القفل حتى لو قفلت الجوال أو كنت بعيد.</p>
+    <a class="btn wallet" href="${WALLET_URL}${order.id}"><span class="apl"></span> إضافة إلى Apple Wallet</a>
+    <p class="sub" style="margin-top:8px;font-size:13px">اضغط الزر ثم «إضافة» في أعلى الشاشة</p></div>`;
   if(subscribed) return `<div class="alertcard ok"><p><b>التنبيه مفعّل 🔔</b><br>تقدر تقفل الصفحة أو تطلع، بيوصلك إشعار على جوالك أول ما يجهز طلبك.</p></div>`;
   if(isIOS&&!standalone) return `<div class="alertcard"><p><b>عشان يوصلك تنبيه على الآيفون حتى لو طلعت:</b></p>
     <ol class="ios-steps"><li>اضغط زر المشاركة <b>⬆︎</b> أسفل Safari</li><li>اختر «إضافة إلى الشاشة الرئيسية»</li><li>افتح «RQ طلبي» من الشاشة الرئيسية واضغط «فعّل التنبيه»</li></ol>
@@ -208,7 +216,7 @@ function showGate(){
 async function poll(){
   if(!id){$("#app").innerHTML=`<p class="sub empty">امسح رمز الطلب من الكاشير لمتابعة طلبك.</p>`;return}
   try{
-    const j=await call("get"); order=j.order; subscribed=j.subscribed||subscribed;
+    const j=await call("get"); order=j.order; subscribed=j.subscribed||subscribed; walletAdded=!!j.wallet;
     if(order.status==="ready"&&lastStatus!=="ready") startAlarm();
     if(order.status!=="ready"&&alarmOn) stopAlarm();
     lastStatus=order.status; render();
